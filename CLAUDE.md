@@ -1,5 +1,5 @@
 # Claude Code
 
-Read and follow `AGENTS.md` in this directory, then the requested stage document in `prompts/`.
+Read `AGENTS.md`, then the relevant document in `prompts/`.
 
-The first exercise is interface-only. Do not install or download a large image model or connect a paid API unless the participant explicitly moves to that stage. Explain actions in Korean.
+Start with the interface exercise: HTML/CSS/JavaScript, image input and history in UI test mode. Move to model download and GPU connection at the corresponding workshop stage. Explain actions in Korean and preserve existing files.

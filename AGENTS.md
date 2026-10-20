@@ -1,32 +1,31 @@
 # Workshop agent instructions
 
-This repository supports a Korean product-design workshop. Explain decisions in plain Korean and make runnable files in the participant's chosen folder.
+This repository supports a Korean product-design workshop. Explain decisions in plain Korean and create runnable files in the participant's chosen folder.
 
-## Stage boundaries
+## Workflow
 
-- Start with **Stage 1 (interface only)** unless the participant explicitly asks to connect a model.
-- Read `docs/interface-requirements.md` and `prompts/01-interface.md`.
-- Use HTML/CSS/JavaScript and a simple local HTTP server. Avoid adding a large application framework, a database server, login, cloud deployment, or paid API dependency for the first exercise.
-- Before creating files, inspect the selected folder and preserve existing work. Do not silently replace the participant's project.
-- Do not download the FLUX model during Stage 1. During the break, follow `docs/model-download.md` and the checked-in helper for the **distilled FLUX.2-klein-4B**. Avoid base/FLUX 3 or duplicate root weights.
-- GPU-server participants do not need local FLUX, PyTorch or CUDA.
-- Inspect OS, GPU, driver, disk and memory before recommending local execution. Do not install or change system drivers without participant approval; never initiate an automatic reboot.
-- Do not claim that a 16 GB Mac can reliably run the full BF16 pipeline. Use the server fallback when local inference is unverified or too slow.
+1. Inspect the folder and preserve existing work.
+2. Begin with **Stage 1: interface only** using `docs/interface-requirements.md` and `prompts/01-interface.md`.
+3. Use HTML/CSS/JavaScript, IndexedDB and the simple local HTTP server. Keep the first 45 minutes focused on the interface, image input and history.
+4. Label mock results as UI tests. Connect FLUX or a GPU API when the participant moves to Stage 2.
+5. For local participants, follow `docs/local-setup.md` and the pinned download helper during the break. Use **FLUX.2-klein-4B distilled** and its complete Diffusers components.
+6. For GPU-server participants, use `docs/api.md` and runtime connection settings.
 
-## Functional contract
+## Implementation
 
-- Text prompt, generate/edit modes, reference image upload/preview, result preview, history with image/prompt/seed/time, reuse as input, and image download are required.
-- Persist history in IndexedDB, including image blobs. Handle storage failures visibly.
-- Mock/demo mode must be clearly labeled. Never present an uploaded image or placeholder as a model-generated result.
-- Automatic segmentation and a manual brush are separate from FLUX. Read `docs/segmentation.md`.
-- Do not send unsupported `mask_image`, `strength` or `negative_prompt` fields to the workshop API.
-- For Stage 2, follow `docs/api.md` exactly. The workshop service is **synchronous** and returns a binary WebP, not BFL's hosted asynchronous JSON job format.
-- Limit the UI to one inference request at a time. Do not automatically repeat a failed generation request; it may already be running on the GPU.
-- Global queue status is not a user's individual queue position or percentage. Do not display fabricated progress.
-- Keys are entered at runtime. Do not save real keys in source, prompts, browser history storage, exported history, logs, screenshots, README or commits. Use `YOUR_WORKSHOP_KEY` in examples.
+- Required: generate/edit modes, text input, reference image preview, result preview, persistent history with images/prompt/seed/time, reuse as input, and downloads.
+- Save image blobs in IndexedDB and surface storage errors clearly.
+- Generation uses a descriptive prompt. Editing uses the original image plus a specific change instruction. English prompting is a workshop recommendation; help translate Korean briefs while preserving their design intent.
+- Keep model requests to the documented fields. The GPU API is synchronous and returns a binary WebP.
+- Allow one inference request at a time. After an uncertain network failure, show the error and let the participant decide when to retry.
+- Show the server's global queue state as global status.
+- Keep the real API key only in the active tab's memory. Public examples use `YOUR_WORKSHOP_KEY`; saved files, exports and logs contain only non-secret settings.
+- Optional extension: use `docs/segmentation.md` for region selection and client-side compositing of surface color/material edits. The main editing workflow remains image + prompt.
 
-## Completion
+## Environment and completion
 
-Run the page locally and check image upload, resizing, history persistence after refresh, image reuse, download and visible errors. For a live backend, check one generation and one edit. Report what has actually been tested and any remaining environment limitation.
+Inspect OS, GPU, driver, available memory and disk before local setup. Explain system-level installation or restart steps and obtain the participant's confirmation before applying them. Start local inference with one 512×512 image and report the observed result. Offer GPU-server mode when the current laptop needs more setup.
 
-Keep the participant's visual preferences. The reference `web/` is a working fallback, not a required visual template.
+Run the page and check upload, preview, history after refresh, image reuse, downloads and visible errors. For a live backend, test one generation and one edit. Distinguish tested behavior from environment-dependent guidance.
+
+Use the participant's preferred visual style. The `web/` folder is a working reference implementation.

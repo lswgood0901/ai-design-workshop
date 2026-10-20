@@ -1,98 +1,101 @@
-# 개인 노트북 준비: Windows / Apple Silicon Mac
+# 개인 노트북에서 FLUX 실행하기
 
-확인일: 2026-10-20. **14:30–15:15의 공통 목표는 모델 연결 전 웹 인터페이스 완성**입니다. 프롬프트 입력, 참조 이미지, 결과 미리보기, 히스토리부터 구현합니다. 드라이버 설치나 대형 모델 다운로드가 늦어져도 이 부분은 진행할 수 있습니다.
+먼저 웹 인터페이스를 만든 뒤, 다운로드한 모델을 로컬 API에 연결합니다. 브라우저 → 로컬 Python API → FLUX 순서로 동작합니다.
 
-## 먼저 실행 경로 선택
+## 실행 환경 선택
 
-| 경로 | 준비 | 수업 운영 기준 |
-|---|---|---|
-| 한양대 GPU 서버 | 최신 브라우저, 인터넷, 강사가 안내한 주소·수업 키 | 로컬 CUDA·PyTorch·FLUX 설치 불필요 |
-| Windows NVIDIA 로컬 | NVIDIA GPU, 호환 드라이버, Python, CUDA 지원 PyTorch | **VRAM 16 GB 이상 / RAM 32 GB 권장**. 12 GB 이하는 오프로딩·양자화 등 별도 검증이 필요하므로 수업에서는 서버 우선 |
-| Apple Silicon Mac 로컬 | M 시리즈, arm64 Python, PyTorch의 MPS | **통합 메모리 24 GB 권장**, 32 GB 이상이면 여유가 더 큼. 16 GB는 최적화 구성에서 실행 가능한 경우가 있지만 이번 기본 구성의 안정 실행을 보장하지 않음 |
+| 경로 | 준비 사항 |
+|---|---|
+| GPU 서버 | 브라우저, 인터넷, 강사가 안내한 서버 주소와 API 키 |
+| Windows NVIDIA | VRAM 16 GB 이상, RAM 32 GB 권장, NVIDIA 드라이버, CUDA용 PyTorch |
+| Apple Silicon Mac | M 시리즈, macOS 14 이상, arm64 Python, PyTorch MPS. **통합 메모리 24 GB 권장**, 32 GB 이상이면 여유가 더 큽니다. |
 
-위 메모리 수치는 수업 운영을 위한 권장 기준입니다. BFL 모델 카드의 약 13 GB VRAM 안내는 실행 구성에 따른 수치이며, 모든 13 GB 기기가 충분하다는 뜻은 아닙니다. Mac의 통합 메모리는 운영체제·브라우저·GPU가 함께 사용하므로 NVIDIA의 전용 VRAM과 직접 비교하지 않습니다.
+로컬 모델 파일은 약 **16 GB**이며, SSD 여유 공간은 **35–40 GB 이상**을 준비합니다. Mac 16 GB는 GPU 서버 경로를 권장합니다. Mac 24 GB도 브라우저와 운영체제가 같은 메모리를 사용하므로, 다른 큰 앱을 정리하고 **512×512 한 장**부터 확인합니다. 모델 실행에 필요한 실제 메모리는 해상도와 기기 환경에 따라 달라집니다.
 
-Mac 16 GB 사용자는 웹 UI와 마스크 선택은 로컬에서 진행하고, 이미지 생성·편집은 서버로 연결하는 경로를 기본으로 합니다. 24 GB도 해상도·동시 앱·오프로딩 방식에 따라 메모리가 부족할 수 있으므로 512×512 한 장부터 확인합니다. 이번 안내를 위해 참가자별 Windows/Mac 전체 모델 추론을 직접 검증한 것은 아닙니다.
+## 1. Python 환경 준비
 
-공통으로 로컬 FLUX 경로는 SSD **35–40 GB 이상의 여유 공간**, 전원 어댑터를 권장합니다. CPU 전용 FLUX 생성은 수업 시간 안의 대안으로 권장하지 않습니다.
+Python **3.11 또는 3.12**를 사용합니다. 아래 명령은 프로젝트 폴더에서 실행합니다.
 
-## Windows: 드라이버와 CUDA Toolkit은 다릅니다
+### Windows NVIDIA
 
-1. 작업 관리자 → 성능에서 **정확한 NVIDIA GPU 이름과 전용 GPU 메모리**를 확인합니다. GPU 모델명만으로 VRAM을 추정하지 않습니다.
-2. `nvidia-smi`가 실행되는지 확인합니다. 실행된다면 드라이버가 이미 설치되어 있을 수 있습니다. 현재 환경을 먼저 검사하고 무조건 재설치하지 않습니다.
-3. 드라이버가 없거나 PyTorch와 호환되지 않으면 [NVIDIA 공식 드라이버](https://www.nvidia.com/Download/index.aspx)에서 해당 GPU·Windows용 드라이버를 설치합니다. 재부팅이 필요할 수 있으므로 웹 UI 실습 중 강제 재부팅하지 않습니다.
-4. Python 3.11 64-bit 가상환경을 만들고 [PyTorch 설치 선택기](https://pytorch.org/get-started/locally/)에서 **Windows / Pip / Python / 해당 GPU와 드라이버가 지원하는 CUDA**를 선택합니다. 출력된 명령을 사용합니다.
+1. 작업 관리자 → 성능에서 GPU 이름과 **전용 GPU 메모리**를 확인합니다.
+2. 터미널에서 `nvidia-smi`로 드라이버를 확인합니다. 설치·업데이트가 필요하면 [NVIDIA 공식 드라이버](https://www.nvidia.com/Download/index.aspx)를 사용합니다.
+3. [PyTorch 설치 선택기](https://pytorch.org/get-started/locally/)에서 Windows / Pip / Python / GPU·드라이버에 맞는 CUDA를 선택합니다.
 
-**일반적인 PyTorch wheel 추론은 NVIDIA 드라이버 + CUDA 지원 PyTorch 패키지로 충분하며, CUDA Toolkit 전체를 별도로 설치할 필요는 없습니다.** Toolkit/nvcc는 직접 소스를 컴파일하거나 특정 확장을 빌드할 때 필요할 수 있습니다. 이 수업의 기본 경로는 그런 빌드를 요구하지 않습니다. 특히 한양대 서버의 CUDA 버전을 참가자 노트북에 그대로 강제하지 않습니다.
-
-`nvidia-smi`에 나오는 CUDA Version은 드라이버가 지원하는 CUDA 수준입니다. 로컬 Toolkit이 설치되었다거나 현재 PyTorch가 그 버전이라는 뜻은 아닙니다. 설치 후 확인합니다.
+일반적인 PyTorch 패키지 추론에는 **NVIDIA 드라이버와 CUDA용 PyTorch**가 필요합니다. CUDA Toolkit은 확장 모듈을 직접 빌드할 때 사용하는 개발 도구입니다.
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-# 이 위치에서 PyTorch 공식 선택기가 제시한 명령을 실행
-python -c "import torch; print('torch:', torch.__version__); print('CUDA runtime:', torch.version.cuda); print('CUDA usable:', torch.cuda.is_available())"
+# PyTorch 공식 선택기가 제시한 설치 명령을 이 위치에서 실행합니다.
+python -c "import torch; print(torch.__version__); print('CUDA:', torch.cuda.is_available())"
 ```
 
-PowerShell 정책 때문에 활성화가 차단되면 시스템 정책을 임의 변경하지 말고 `.\.venv\Scripts\python.exe`를 `python` 대신 사용하면 됩니다.
+가상환경 활성화가 차단되면 `.\.venv\Scripts\python.exe`로 아래 명령의 `python`을 대신할 수 있습니다. 드라이버 변경과 재부팅은 작업을 저장한 뒤 진행합니다.
 
-## Mac: CUDA 대신 MPS
+### Apple Silicon Mac
 
-- Apple Silicon **M1/M2/M3/M4 등 M 시리즈**를 사용합니다. 이 안내는 Intel Mac용 경로가 아닙니다.
-- CUDA나 NVIDIA 드라이버를 설치하지 않습니다. PyTorch의 **MPS(Metal)**가 Apple GPU를 사용합니다.
-- 현재 PyTorch 배포판과 호환되는 macOS가 필요합니다. 수업 준비 기준은 **macOS 14 이상**, **arm64 Python 3.11**입니다. Rosetta의 x86_64 Python을 사용하지 않습니다.
-- Apple의 PyTorch 준비 안내에는 **Xcode Command Line Tools**가 포함되어 있습니다. 터미널에서 `xcode-select -p`로 먼저 확인하고 없으면 `xcode-select --install`로 작은 명령행 도구 설치를 시작할 수 있습니다. **App Store의 전체 Xcode 설치는 요구하지 않습니다.** 일반 wheel 설치가 정상 동작하는데 CLI 도구만 추가하느라 실습을 멈추지 않습니다. 소스 빌드 오류가 생기면 무리하게 해결하지 말고 서버 경로로 전환합니다.
+Apple GPU는 **MPS(Metal)**를 사용합니다. `platform.machine()`이 `arm64`인지 확인합니다.
 
 ```bash
 python3 -c "import platform; print(platform.machine())"
-# arm64인지 확인
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install torch
-python -c "import torch; print(torch.__version__); print('MPS built:', torch.backends.mps.is_built()); print('MPS usable:', torch.backends.mps.is_available())"
+python -m pip install torch==2.11.0
+python -c "import torch; print(torch.__version__); print('MPS:', torch.backends.mps.is_available())"
 ```
 
-`MPS usable: True`는 PyTorch가 GPU를 볼 수 있다는 뜻입니다. FLUX 전체 모델이 해당 메모리에서 성공한다는 검사와는 별개입니다. 메모리 부족 시 PyTorch의 안전 메모리 한도를 해제하는 설정을 쓰지 않습니다.
+[Apple 준비 안내](https://developer.apple.com/metal/pytorch/)에 따라 명령행 도구는 `xcode-select -p`로 확인합니다. 필요할 때 `xcode-select --install`로 Command Line Tools를 설치합니다. 아래 API는 MPS의 BF16 연산 가능 여부를 확인한 후 모델을 불러옵니다.
 
-## 다운로드와 모델 실행을 분리합니다
+## 2. 모델 다운로드
 
-다운로드에 필요한 패키지는 `requirements-download.txt` 한 개입니다. **다운로드를 시작하기 위해 먼저 CUDA Toolkit이나 PyTorch를 설치할 필요는 없습니다.** 아래 명령은 Windows/Mac에서 동일하며, 활성화한 Python 가상환경에서 실행합니다.
+이 단계는 PyTorch 설치와 병행할 수 있습니다. [다운로드 안내](model-download.md)의 고정된 20개 파일을 받습니다.
 
 ```bash
 python -m pip install -r requirements-download.txt
-python scripts/download_models.py --model flux
-# 강사 안내 후 로컬 FLUX 참가자만:
 python scripts/download_models.py --model flux --download
+python scripts/download_models.py --model flux --verify
 ```
 
-분할 모델은 [별도 안내](segmentation.md)를 따릅니다. 브라우저 WASM에서 실행하므로 로컬 PyTorch가 필요하지 않습니다.
+모델 저장 위치: `models/FLUX.2-klein-4B`
 
-## FLUX를 연결할 때의 공통 기준
+## 3. 로컬 API 실행
 
-웹 인터페이스가 완성되고 다운로드 검사가 끝난 뒤, 로컬 백엔드에서 모델을 연결합니다. **HTML 자체가 16 GB의 Python 모델을 직접 실행하는 구조가 아닙니다.** 브라우저 UI → 로컬 Python 백엔드 → FLUX, 또는 브라우저 UI → 한양대 GPU API로 연결합니다.
-
-검증된 한양대 서버 환경은 Python 3.12, PyTorch 2.11.0+cu130, Diffusers 0.39.0, Transformers 5.14.1, Accelerate 1.14.0입니다. 로컬은 운영체제·GPU에 맞는 PyTorch wheel이 필요하므로 서버의 `+cu130`을 복사하지 않습니다. 로컬 모델을 연결하는 에이전트는 우선 다음 계열을 사용하고 설치 후 import 및 512×512 한 장 생성 검사를 수행합니다.
+PyTorch가 GPU를 인식하고 다운로드 검사가 완료되면 실행합니다.
 
 ```bash
-python -m pip install "diffusers==0.39.0" "transformers==5.14.1" "accelerate==1.14.0" safetensors Pillow
-python -c "from diffusers import Flux2KleinPipeline; print('Flux2KleinPipeline ready')"
+python -m pip install -r requirements-local.txt
+python scripts/local_api.py
 ```
 
-모델 경로는 `models/FLUX.2-klein-4B`입니다. `local_files_only=True`로 이미 받은 파일을 사용하고, `num_inference_steps=4`, `guidance_scale=1.0`, 한 요청당 한 장으로 시작합니다. `base` 모델용 많은 스텝 수를 혼합하지 않습니다. CUDA에서는 BF16 지원 여부를 확인하고 CPU offload를 활용할 수 있습니다. MPS에서는 현재 PyTorch/macOS에 지원되는 dtype과 메모리 설정을 별도로 확인해야 하므로 CUDA용 offload 설정을 그대로 복사하지 않습니다.
+브라우저에서 `http://127.0.0.1:8032/health`를 열어 `ready_workers`가 `1`이 되는지 확인합니다. 첫 실행에서는 모델을 메모리로 읽는 시간이 필요합니다. 터미널을 열어둔 상태로 웹 인터페이스의 연결 정보를 입력합니다.
 
-가중치가 16 GB에 가깝고 활성값·메모리 복사·운영체제 공간이 추가로 필요합니다. Mac 16 GB 또는 NVIDIA VRAM이 부족한 기기에서 오류가 나면 **512×512 한 장 → 불필요한 앱 종료 → 서버 연결** 순서로 처리합니다. 검증되지 않은 양자화 모델·추가 GPU 라이브러리를 교육 중 무작정 설치하지 않습니다.
+| 설정 | 값 |
+|---|---|
+| API 주소 | `http://127.0.0.1:8032` |
+| API 키 입력란 | `local` |
+| 첫 생성 크기 | `512×512` |
+| 생성 설정 | 4 steps / guidance 1.0 / 한 장 |
 
-## 에이전트에게 전달할 지시
+`local`은 이 컴퓨터의 로컬 API를 선택할 때 사용하는 값입니다. GPU 서버 연결에는 강사가 제공한 주소와 키를 사용합니다. 웹 화면은 별도 터미널에서 `python scripts/serve.py`로 열 수 있습니다.
 
-> 이 프로젝트의 로컬 준비와 모델 다운로드 가이드를 읽고 내 OS, CPU 아키텍처, GPU, GPU 메모리/통합 메모리, 디스크 공간을 먼저 확인해줘. Windows는 드라이버와 CUDA용 PyTorch wheel의 호환성을 점검하고 CUDA Toolkit은 기본 설치하지 마. Mac은 arm64 Python과 MPS를 사용해. 드라이버/OS 변경이나 재부팅은 먼저 설명해줘. 웹 UI 작업은 모델 설치와 분리해서 진행하고, 메모리 부족이나 다운로드 지연이 생기면 한양대 서버 연결 경로로 전환해줘. 이번 수업의 distilled 4B 모델과 기본값만 사용해.
+CUDA에서는 BF16과 CPU offload를 기본으로 사용하고, MPS에서는 BF16으로 모델을 올립니다. 메모리 부족 시 다른 큰 앱을 정리한 뒤 512×512로 확인하고, 수업 중에는 GPU 서버 연결로 이어갈 수 있습니다.
 
-## 공식 확인 자료
+## 4. 생성·편집 확인
 
-- [BFL FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
-- [PyTorch 설치 선택기](https://pytorch.org/get-started/locally/)
-- [PyTorch MPS 안내](https://docs.pytorch.org/docs/stable/notes/mps.html)
-- [Apple PyTorch / Metal 준비 사항](https://developer.apple.com/metal/pytorch/)
-- [NVIDIA CUDA 드라이버 호환성](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)
-- [Diffusers MPS 최적화 안내](https://huggingface.co/docs/diffusers/main/en/optimization/mps)
+1. 텍스트로 테이블 이미지 한 장을 생성합니다.
+2. 결과를 참조 이미지로 선택하고 색상·소재 변경 지시문을 입력합니다.
+3. 결과와 프롬프트가 히스토리에 남고 WebP로 저장되는지 확인합니다.
+
+한국어 디자인 의도는 [영어 프롬프트 예시](design-brief.md#프롬프트를-영어로-정리하기)를 참고해 정리하면 좋습니다. 선택 영역 합성은 [분할 안내](segmentation.md)에서 추가할 수 있습니다.
+
+## 환경 확인 기록
+
+GPU 서버의 Python 3.12 / PyTorch 2.11.0 / Diffusers 0.39.0 / Transformers 5.14.1 / Accelerate 1.14.0 환경에서, 제공된 로컬 API와 선택 다운로드 20개 파일로 512×512 생성·편집을 확인했습니다. Windows·Mac은 각 기기의 GPU 확인과 첫 이미지 생성 결과를 기준으로 연결을 점검합니다.
+
+- [공식 FLUX.2-klein-4B 모델](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
+- [PyTorch 설치](https://pytorch.org/get-started/locally/)
+- [PyTorch MPS](https://docs.pytorch.org/docs/stable/notes/mps.html)
+- [Apple PyTorch / Metal](https://developer.apple.com/metal/pytorch/)

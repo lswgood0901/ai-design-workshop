@@ -35,22 +35,22 @@ function setMode(mode) {
   ["generate", "edit"].forEach(value => $(`tab-${value}`).setAttribute("aria-selected", String(mode === value)));
   $("reference-section").hidden = mode !== "edit";
   $("prompt-help").textContent = mode === "generate"
-    ? "수치 입력만으로 실제 제조 치수가 보장되지는 않습니다."
-    : "바꿀 부분과 유지할 부분을 함께 설명하세요. 이미지 순서도 지시할 수 있습니다.";
+    ? "대상·형태·소재·색상·구도를 구체적으로 입력하세요."
+    : "원본 이미지에서 바꿀 부분과 유지할 부분을 함께 설명하세요.";
   updateRunMode();
 }
 function updateRunMode() {
   const api = state.runMode === "api";
-  $("connection-label").textContent = api ? "GPU API 연결" : "인터페이스 실습 모드";
+  $("connection-label").textContent = api ? "GPU 서버 연결" : "인터페이스 실습 모드";
   $("connection-dot").classList.toggle("live", api);
   $("mode-notice").classList.toggle("api", api);
   $("mode-notice").replaceChildren();
   const title = document.createElement("strong"), detail = document.createElement("span");
   title.textContent = api ? "FLUX.2 [klein] 4B" : "인터페이스 실습 모드";
-  detail.textContent = api ? "지시문과 참조 이미지를 설정한 GPU 서버로 전송합니다. 대기열 순서에 따라 한 장씩 처리됩니다." : "지금은 AI 모델에 연결하지 않았습니다. 입력·미리보기·히스토리의 작동을 확인합니다.";
+  detail.textContent = api ? "원본 이미지와 지시문으로 디자인을 생성·편집합니다. GPU 서버에서 접수한 순서대로 처리합니다." : "입력·미리보기·히스토리를 구성한 뒤 GPU 서버에 연결합니다.";
   $("mode-notice").append(title, detail);
   $("submit-label").textContent = api ? (state.mode === "edit" ? "이미지 편집" : "이미지 생성") : "인터페이스 테스트";
-  if (!api) $("server-status").textContent = "모델 미연결 · API 비용이 발생하지 않습니다.";
+  if (!api) $("server-status").textContent = "입력과 결과 기록의 작동을 확인합니다.";
 }
 function setBusy(value) {
   state.busy = value;
@@ -74,7 +74,7 @@ async function refreshStatus() {
   polling = true;
   try {
     const result = await getStatus(state.connection, { signal: AbortSignal.timeout(10000) });
-    $("server-status").textContent = `${result.label} · 개인 요청의 순번은 제공하지 않습니다.`;
+    $("server-status").textContent = result.label;
   } catch (error) {
     $("server-status").textContent = error.name === "TimeoutError" ? "서버 상태 확인 시간이 초과되었습니다." : `상태 확인: ${error.message}`;
   } finally { polling = false; }
@@ -175,7 +175,14 @@ async function run(event) {
   state.controller = new AbortController();
   try {
     const result = kind === "mock" ? { blob: await mockImage(payload), seed: null, elapsed_seconds: null } :
-      await requestImage(state.connection, mode, payload, { signal: state.controller.signal });
+      await requestImage(state.connection, mode, payload, {
+        signal: state.controller.signal,
+        onQueue: status => {
+          $("loading-title").textContent = status.state === "waiting"
+            ? `GPU 서버 접수 대기 중 · ${Math.ceil(status.delayMs / 1000)}초 뒤 자동 접수`
+            : "GPU 서버에 요청을 접수하고 있습니다.";
+        },
+      });
     let output = result.blob, composited = false, warning = "";
     if (applyMask) {
       try { output = await compositeResult(output, original, mask); composited = true; }

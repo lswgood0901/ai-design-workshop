@@ -17,7 +17,7 @@
       <div><p class="eyebrow">01 / IMAGE EXPLORATION</p><h1>디자인 의도를 이미지로.</h1></div>
       <p>생성하고, 수정하고, 비교합니다.<br>탐색의 과정을 작업 기록으로 남기세요.</p>
     </div>
-    <div id="mode-notice" class="notice"><strong>인터페이스 실습 모드</strong><span>지금은 AI 모델에 연결하지 않았습니다. 입력·미리보기·히스토리의 작동을 확인합니다.</span></div>
+    <div id="mode-notice" class="notice"><strong>인터페이스 실습 모드</strong><span>입력·미리보기·히스토리를 구성한 뒤 GPU 서버에 연결합니다.</span></div>
     <div class="workspace">
       <section class="preview-panel" aria-labelledby="preview-title">
         <div class="panel-top"><h2 id="preview-title">결과 미리보기</h2><span id="preview-meta">NO OUTPUT YET</span></div>
@@ -35,23 +35,24 @@
         <div class="control-content">
           <div class="field-label"><label for="prompt">디자인 지시문</label><button id="example-prompt" type="button" class="text-button">예시 입력 ↗</button></div>
           <textarea id="prompt" rows="6" maxlength="32768" required placeholder="어떤 디자인을 탐색할까요?&#10;대상, 형태, 소재, 색상, 구도를 구체적으로 입력하세요."></textarea>
-          <p class="hint" id="prompt-help">수치 입력만으로 실제 제조 치수가 보장되지는 않습니다.</p>
+          <p class="hint" id="prompt-help">대상·형태·소재·색상·구도를 구체적으로 입력하세요.</p>
           <section id="reference-section" hidden>
             <div class="field-label"><label for="image-input">참조 이미지 <span id="reference-count">0 / 4</span></label></div>
             <label class="upload-zone" for="image-input"><span>＋</span><strong>이미지 추가</strong><small>PNG · JPG · WebP / 한 장당 10 MiB 이하</small><input id="image-input" type="file" accept="image/png,image/jpeg,image/webp" multiple></label>
             <div id="reference-list" class="reference-list"></div>
-            <button id="mask-open" type="button" class="wide secondary" disabled>첫 번째 이미지의 영역 선택 ↗</button>
-            <label class="check-row"><input id="composite" type="checkbox" disabled><span>선택 영역에만 결과 합성 <small>마스크가 있을 때 사용 · 브라우저에서 후처리</small></span></label>
-            <p class="hint">FLUX 편집은 이미지와 지시문을 사용합니다. 마스크 자체는 서버로 보내지 않습니다.</p>
+            <details class="model-details region-options"><summary>영역 합성 (선택)</summary>
+              <button id="mask-open" type="button" class="wide secondary" disabled>첫 번째 이미지의 영역 선택 ↗</button>
+              <label class="check-row"><input id="composite" type="checkbox" disabled><span>선택 영역에 편집 결과 합성 <small>소재·색상을 바꾸고 주변 이미지를 유지할 때 사용</small></span></label>
+            </details>
           </section>
           <div class="parameters">
-            <div><label for="size">출력 비율</label><select id="size"><option value="1024x1024">정사각형 · 1024 × 1024</option><option value="1216x832">가로형 · 1216 × 832</option><option value="832x1216">세로형 · 832 × 1216</option><option value="auto">참조 이미지 기준 자동</option></select></div>
+            <div><label for="size">출력 비율</label><select id="size"><option value="1024x1024">정사각형 · 1024 × 1024</option><option value="512x512">로컬 테스트 · 512 × 512</option><option value="1216x832">가로형 · 1216 × 832</option><option value="832x1216">세로형 · 832 × 1216</option><option value="auto">참조 이미지 기준 자동</option></select></div>
             <div><label for="seed">시드 <span class="muted">선택</span></label><input id="seed" type="number" min="0" max="4294967295" step="1" placeholder="무작위"></div>
           </div>
           <details class="model-details"><summary>실습 모델과 생성 조건</summary><p>FLUX.2 [klein] 4B · Distilled<br>4 steps · guidance 1.0 · WebP<br>한 번에 한 장을 생성합니다.</p></details>
           <button id="submit-button" type="submit" class="primary wide"><span id="submit-label">인터페이스 테스트</span><span aria-hidden="true">→</span></button>
           <button id="cancel-button" type="button" class="wide" hidden>응답 기다리기 중단</button>
-          <p id="server-status" class="server-status">모델 미연결 · API 비용이 발생하지 않습니다.</p>
+          <p id="server-status" class="server-status">입력과 결과 기록의 작동을 확인합니다.</p>
         </div>
       </form>
     </div>
@@ -65,13 +66,12 @@
   <dialog id="connection-dialog">
     <div class="dialog-head"><div><p class="eyebrow">CONNECTION</p><h2>실습 환경 연결</h2></div><button class="icon-button dialog-close" aria-label="닫기">×</button></div>
     <form id="connection-form">
-      <label for="run-mode">실행 방식</label><select id="run-mode"><option value="mock">인터페이스 실습 · 모델 미연결</option><option value="api">GPU API · 실제 이미지 생성</option></select>
+      <label for="run-mode">실행 방식</label><select id="run-mode"><option value="mock">인터페이스 실습</option><option value="api">GPU 서버 · 이미지 생성 및 편집</option></select>
       <div id="api-fields" hidden>
-        <label for="server-url">API 서버 주소</label><input id="server-url" type="url" placeholder="https://강사가-안내한-주소" autocomplete="off" spellcheck="false">
+        <label for="server-url">GPU 서버 주소</label><input id="server-url" type="url" placeholder="https://강사가-안내한-주소" autocomplete="off" spellcheck="false">
         <label for="api-key">수업용 API 키</label><input id="api-key" type="password" placeholder="수업에서 안내받은 키 입력" autocomplete="off" spellcheck="false">
-        <p class="hint">키는 이 탭의 메모리에만 유지됩니다. 새로고침하면 다시 입력합니다.</p>
         <label for="connection-file" class="file-label">또는 강사가 제공한 연결 JSON 불러오기<input id="connection-file" type="file" accept=".json,application/json"></label>
-        <p class="hint">API 모드에서는 지시문과 참조 이미지가 입력한 서버에 전송됩니다. 로컬 서버도 같은 API 형식을 사용할 수 있습니다.</p>
+        <p class="hint">GPU 서버에 지시문과 참조 이미지를 전달해 생성·편집합니다.</p>
       </div>
       <p id="connection-error" class="error-text" role="alert" hidden></p><button class="primary wide" type="submit">적용</button>
     </form>
@@ -85,7 +85,7 @@
     </div>
     <p id="sam-status" class="hint">먼저 브러시로 영역을 선택할 수 있습니다. SlimSAM은 다운로드한 모델을 브라우저에서 실행합니다.</p>
     <div class="mask-stage"><canvas id="mask-canvas" aria-label="마스크 편집 이미지"></canvas></div>
-    <div class="mask-bottom"><p class="hint">밝은 영역이 선택됩니다. 합성 시 해당 영역만 결과로 교체하므로<br>형태가 크게 달라지면 경계가 어긋날 수 있습니다.</p><div><button id="mask-export" type="button">마스크 PNG 저장</button><button id="mask-apply" type="button" class="primary">영역 적용</button></div></div>
+    <div class="mask-bottom"><p class="hint">밝게 표시된 영역에 편집 결과를 합성합니다.<br>소재·색상처럼 형태를 유지하는 수정에 활용하세요.</p><div><button id="mask-export" type="button">마스크 PNG 저장</button><button id="mask-apply" type="button" class="primary">영역 적용</button></div></div>
   </dialog>
   <script type="module" src="./app.mjs"></script>
 </body>

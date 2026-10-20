@@ -54,11 +54,50 @@ test("real API returns WebP directly and reads seed headers", async () => {
 test("API rejects wrong content type and reports full queue", async () => {
   const connection = { base_url: "https://example.com", api_key: "test-only" };
   await assert.rejects(requestImage(connection, "generate", {}, { fetcher: async () => new Response("<html/>", { headers: { "Content-Type": "text/html" } }) }), /이미지 대신/);
-  await assert.rejects(requestImage(connection, "generate", {}, { fetcher: async () => new Response('{"detail":"queue full"}', { status: 429, headers: { "Content-Type": "application/json" } }) }), /대기열/);
+  await assert.rejects(requestImage(connection, "generate", {}, { queueWaitMs: 0, fetcher: async () => new Response('{"detail":"queue full"}', { status: 429, headers: { "Content-Type": "application/json" } }) }), /접수 대기/);
 });
 test("global status is not presented as a personal queue position", async () => {
   const data = { ready_workers: 4, workers: [{ state: "busy" }, { state: "ready" }], queue_size: 7 };
   assert.equal(describeStatus(data), "GPU 4개 준비 · 1개 실행 중 · 전체 대기 7건");
   const result = await getStatus({ base_url: "https://example.com", api_key: "test-only" }, { fetcher: async () => new Response(JSON.stringify(data)) });
   assert.equal(result.data.queue_size, 7);
+});
+test("51st client waits on explicit 429 and re-submits the same request once space is available", async () => {
+  let calls = 0;
+  const events = [], delays = [], bodies = [];
+  const result = await requestImage({ base_url: "https://example.com", api_key: "test-only" }, "generate", { prompt: "table", seed: 7 }, {
+    onQueue: state => events.push(state.state), random: () => 0,
+    delay: async milliseconds => delays.push(milliseconds),
+    fetcher: async (url, options) => {
+      calls++; bodies.push(options.body);
+      return calls === 1 ? new Response('{"detail":"full"}', { status: 429, headers: { "Retry-After": "5" } })
+        : new Response("webp", { headers: { "Content-Type": "image/webp" } });
+    },
+  });
+  assert.equal(calls, 2); assert.deepEqual(delays, [5000]); assert.deepEqual(events, ["waiting", "submitting"]);
+  assert.equal(bodies[0], bodies[1]); assert.equal(await result.blob.text(), "webp");
+});
+test("ambiguous network failure, timeout and 5xx are not auto-retried", async () => {
+  const connection = { base_url: "https://example.com", api_key: "test-only" };
+  for (const failure of [new TypeError("network"), new DOMException("timeout", "TimeoutError"), 503, 504]) {
+    let calls = 0;
+    await assert.rejects(requestImage(connection, "generate", {}, {
+      fetcher: async () => {
+        calls++;
+        if (typeof failure === "number") return new Response("{}", { status: failure });
+        throw failure;
+      },
+    }));
+    assert.equal(calls, 1);
+  }
+});
+test("cancelling client-side admission wait does not submit another request", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  await assert.rejects(requestImage({ base_url: "https://example.com", api_key: "test-only" }, "generate", {}, {
+    signal: controller.signal,
+    onQueue: () => controller.abort(),
+    fetcher: async () => { calls++; return new Response("{}", { status: 429 }); },
+  }), { name: "AbortError" });
+  assert.equal(calls, 1);
 });
