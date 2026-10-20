@@ -1,0 +1,6 @@
+{
+  "prompt": "Change only the legs to brushed aluminum. Keep the tabletop and viewpoint unchanged.",
+  "input_image": "data:image/webp;base64,REPLACE_WITH_IMAGE_BASE64",
+  "seed": 42,
+  "output_format": "webp"
+}
