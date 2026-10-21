@@ -1,8 +1,46 @@
-# GPU 서버 API
+# 이미지 생성·편집 API
 
 이미지 생성·편집 요청을 보내면 작업이 끝난 뒤 **WebP 이미지**를 반환하는 동기식 API입니다.
 
-## 접속 정보
+기존 웹 화면에서 **GPU 서버** 또는 **로컬 모델**을 선택해 같은 생성·편집 경로를 사용합니다. 아래 기본 예시는 GPU 서버 기준이며, 로컬 실행은 다음 설정을 적용합니다.
+
+## 로컬 모델 연결
+
+[설치·실행 안내](local-setup.md)에 따라 API를 실행한 뒤 웹 화면에서 **로컬 모델**을 선택합니다.
+
+```text
+Base URL: http://127.0.0.1:8032
+Authorization: Bearer local
+Content-Type: application/json
+```
+
+| 항목 | 로컬 4비트 설정 |
+|---|---|
+| Mac | Apple Silicon / MLX·MFLUX / 미리 변환한 4비트 모델 |
+| Windows | NVIDIA CUDA / bitsandbytes NF4 |
+| 생성 크기 | 기본 512×512, 각 변 64–512 및 16의 배수 |
+| 편집 입력 | 참조 이미지 1–4장, 먼저 한 장으로 실습. 추론 입력은 최대 512×512로 축소 |
+| 생성 설정 | 4 steps / guidance 1.0 / 한 장 |
+| 동시 작업 | 한 요청씩 실행, 작업 종료 시 모델 프로세스 종료 |
+
+```javascript
+const response = await fetch('http://127.0.0.1:8032/v1/generate', {
+  method: 'POST',
+  headers: { 'Authorization': 'Bearer local', 'Content-Type': 'application/json' },
+  body: JSON.stringify({ prompt, width: 512, height: 512, seed: 42 })
+});
+if (!response.ok) {
+  const error = await response.json();
+  throw new Error(error.detail || `요청 실패: ${response.status}`);
+}
+const imageBlob = await response.blob();
+```
+
+`/health`의 `ready_workers: 1`은 요청할 준비가 됐다는 뜻입니다. `/v1/status`에서 `backend`, `busy`, `memory.available_gib`, `last_error`로 현재 상태를 확인합니다. 모델은 요청마다 불러옵니다.
+
+메모리 보호 기준에 도달하면 **503**과 함께 `detail`에 중단 이유를 반환합니다. 웹 화면에 이 문장을 표시하고, 사용자가 앱을 정리하거나 GPU 서버 모드로 전환할 수 있게 합니다. 시작 전 사용 가능한 RAM 9 GiB, 실행 중 최소 4 GiB, Mac RSS / Windows 프로세스 전용 메모리 최대 7 GiB 등 [보호 설정](local-setup.md#메모리-보호-설정)을 유지합니다.
+
+## GPU 서버 접속 정보
 
 강사가 제공한 서버 주소와 키를 웹 화면에 입력합니다. 코드 예시는 `YOUR_WORKSHOP_KEY` 자리표시자를 사용합니다.
 
@@ -47,7 +85,7 @@ ngrok-skip-browser-warning: true
 }
 ```
 
-## 입력값
+## GPU 서버 입력값
 
 | 필드 | 기준 |
 |---|---|
@@ -80,7 +118,7 @@ const imageUrl = URL.createObjectURL(imageBlob);
 
 키는 현재 탭의 메모리에 유지하고, 이미지와 작업 조건을 히스토리에 저장합니다. 전체 구현은 [`web/`](../web/)을 참고합니다.
 
-## 상태 확인
+## GPU 서버 상태 확인
 
 GPU 4개에서 최대 4건을 동시에 처리하고 나머지는 대기열에서 순서대로 실행합니다. `/v1/status`는 전체 서버 상태를 보여줍니다.
 

@@ -16,10 +16,13 @@ POST /v1/generate와 /v1/edit를 사용하고 WebP 응답을 이미지로 표시
 ## 개인 노트북
 
 ```text
-docs/local-setup.md를 따라 다운로드한 models/FLUX.2-klein-4B를 연결해줘.
-Windows NVIDIA는 CUDA, Apple Silicon Mac은 MPS 환경을 사용해줘.
-제공된 scripts/local_api.py와 requirements-local.txt를 참고해 로컬 API를 실행해줘.
-입력·출력은 docs/api.md에 맞추고 웹 화면에서 접속하게 해줘.
+docs/local-setup.md와 docs/model-download.md를 따라 다운로드한 모델을 연결해줘.
+Apple Silicon Mac은 requirements-local-mlx.txt와 MLX 4비트 모델을,
+Windows NVIDIA는 requirements-local-cuda.txt와 CUDA NF4 경로를 사용해줘.
+제공된 scripts/local_api.py --backend auto --model-dir 실제모델경로로 실행해줘.
+외부 메모리 감시와 자동 중단 기준을 유지하고 웹 화면의 로컬 모델 모드로 접속해줘.
+주소는 http://127.0.0.1:8032, 로컬 연결 키는 local이야.
+입력·출력은 docs/api.md에 맞춰주고, 중단되면 화면에 원인을 표시해줘.
 512×512 한 장 생성과 이미지+프롬프트 편집으로 실제 동작을 확인해줘.
 사용한 패키지 버전과 실행 결과를 알려줘.
 ```

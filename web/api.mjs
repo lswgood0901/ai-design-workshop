@@ -1,10 +1,10 @@
-import { validateConnection, describeStatus } from "./core.mjs";
+import { validateConnection, describeStatus, isLocalConnection } from "./core.mjs";
 
 function headers(connection, accept = "application/json") {
   return { Authorization: `Bearer ${connection.api_key}`, Accept: accept, "ngrok-skip-browser-warning": "true" };
 }
 
-async function responseError(response) {
+async function responseError(response, local = false) {
   const value = await response.json().catch(() => ({}));
   const userMessage = {
     401: "API 키를 확인해 주세요.", 403: "접근이 허용되지 않았습니다. 강사에게 문의해 주세요.",
@@ -13,6 +13,9 @@ async function responseError(response) {
     504: "응답 대기 시간이 초과되었습니다. 강사에게 작업 상태를 확인해 주세요.",
   }[response.status];
   const detail = typeof value.detail === "string" ? value.detail : "";
+  if (local && detail) return new Error(detail);
+  if (local && response.status === 503) return new Error("로컬 작업이 중단되었습니다. 메모리 상태와 실행 창을 확인한 뒤 다시 실행해 주세요.");
+  if (local && response.status === 429) return new Error("로컬 이미지 작업이 실행 중입니다. 완료 후 다시 실행해 주세요.");
   return new Error(userMessage || `요청 실패 (${response.status}). ${detail || "입력값과 연결 상태를 확인해 주세요."}`);
 }
 
@@ -21,8 +24,10 @@ export async function getStatus(connection, { fetcher = fetch, signal } = {}) {
   const response = await fetcher(`${valid.base_url}/v1/status`, {
     headers: headers(valid), credentials: "omit", redirect: "error", cache: "no-store", signal,
   });
-  if (!response.ok) throw await responseError(response);
+  if (!response.ok) throw await responseError(response, isLocalConnection(valid));
   const data = await response.json();
+  if (isLocalConnection(valid) && data.error) throw new Error(String(data.error));
+  if (isLocalConnection(valid) && data.loading) return { data, label: "로컬 모델 설치 상태를 확인하고 있습니다." };
   return { data, label: describeStatus(data) };
 }
 
@@ -54,7 +59,7 @@ export async function requestImage(connection, mode, payload, {
         method: "POST", headers: { ...headers(valid, "image/webp"), "Content-Type": "application/json" },
         body: JSON.stringify(payload), credentials: "omit", redirect: "error", cache: "no-store", signal: abort.signal,
       });
-      if (response.status === 429) {
+      if (response.status === 429 && !isLocalConnection(valid)) {
         clearTimeout(timeout);
         await response.body?.cancel();
         const retryHeader = Number(response.headers.get("Retry-After") || 5);
@@ -67,7 +72,7 @@ export async function requestImage(connection, mode, payload, {
         onQueue({ state: "submitting", attempt: attempts });
         continue;
       }
-      if (!response.ok) throw await responseError(response);
+      if (!response.ok) throw await responseError(response, isLocalConnection(valid));
       if (response.headers.get("Content-Type")?.split(";")[0].trim() !== "image/webp") {
         throw new Error("서버가 이미지 대신 다른 응답을 보냈습니다. 주소를 확인해 주세요.");
       }

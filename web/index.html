@@ -17,7 +17,7 @@
       <div><p class="eyebrow">01 / IMAGE EXPLORATION</p><h1>디자인 의도를 이미지로.</h1></div>
       <p>생성하고, 수정하고, 비교합니다.<br>탐색의 과정을 작업 기록으로 남기세요.</p>
     </div>
-    <div id="mode-notice" class="notice"><strong>인터페이스 실습 모드</strong><span>입력·미리보기·히스토리를 구성한 뒤 GPU 서버에 연결합니다.</span></div>
+    <div id="mode-notice" class="notice"><strong>인터페이스 실습 모드</strong><span>입력·미리보기·히스토리를 구성한 뒤 로컬 모델 또는 GPU 서버에 연결합니다.</span></div>
     <div class="workspace">
       <section class="preview-panel" aria-labelledby="preview-title">
         <div class="panel-top"><h2 id="preview-title">결과 미리보기</h2><span id="preview-meta">NO OUTPUT YET</span></div>
@@ -25,7 +25,7 @@
           <div id="empty-state" class="empty-state"><div class="frame-mark" aria-hidden="true"><span>+</span></div><h3>첫 번째 디자인을 시작하세요.</h3><p>오른쪽에 디자인 의도를 입력한 뒤<br>실행 버튼을 눌러주세요.</p></div>
           <img id="output-image" alt="선택한 디자인 결과" hidden>
           <span id="mock-watermark" class="mock-watermark" hidden>UI TEST · AI 생성 결과 아님</span>
-          <div id="loading-state" class="loading-state" hidden><div class="spinner"></div><strong id="loading-title">요청을 처리하고 있습니다.</strong><span id="elapsed">0초</span><p>서버 이용자가 많으면 대기 시간이 늘어납니다.</p></div>
+          <div id="loading-state" class="loading-state" hidden><div class="spinner"></div><strong id="loading-title">요청을 처리하고 있습니다.</strong><span id="elapsed">0초</span><p id="loading-help">서버 이용자가 많으면 대기 시간이 늘어납니다.</p></div>
         </div>
         <div class="preview-actions"><p id="output-caption">이미지는 WebP 형식으로 저장됩니다.</p><div><button id="reuse-output" disabled>편집 입력으로 사용</button><button id="download-output" disabled>이미지 저장 ↓</button><button id="download-record" class="icon-button" disabled title="프롬프트와 생성 조건을 JSON으로 저장">기록 ↓</button></div></div>
         <div id="message" class="message" role="status" aria-live="polite" hidden></div>
@@ -46,7 +46,7 @@
             </details>
           </section>
           <div class="parameters">
-            <div><label for="size">출력 비율</label><select id="size"><option value="1024x1024">정사각형 · 1024 × 1024</option><option value="512x512">로컬 테스트 · 512 × 512</option><option value="1216x832">가로형 · 1216 × 832</option><option value="832x1216">세로형 · 832 × 1216</option><option value="auto">참조 이미지 기준 자동</option></select></div>
+            <div><label for="size">출력 비율</label><select id="size"><option value="1024x1024">정사각형 · 1024 × 1024</option><option value="512x512">정사각형 · 512 × 512</option><option value="1216x832">가로형 · 1216 × 832</option><option value="832x1216">세로형 · 832 × 1216</option><option value="auto">참조 이미지 기준 자동</option></select></div>
             <div><label for="seed">시드 <span class="muted">선택</span></label><input id="seed" type="number" min="0" max="4294967295" step="1" placeholder="무작위"></div>
           </div>
           <details class="model-details"><summary>실습 모델과 생성 조건</summary><p>FLUX.2 [klein] 4B · Distilled<br>4 steps · guidance 1.0 · WebP<br>한 번에 한 장을 생성합니다.</p></details>
@@ -66,7 +66,12 @@
   <dialog id="connection-dialog">
     <div class="dialog-head"><div><p class="eyebrow">CONNECTION</p><h2>실습 환경 연결</h2></div><button class="icon-button dialog-close" aria-label="닫기">×</button></div>
     <form id="connection-form">
-      <label for="run-mode">실행 방식</label><select id="run-mode"><option value="mock">인터페이스 실습</option><option value="api">GPU 서버 · 이미지 생성 및 편집</option></select>
+      <label for="run-mode">실행 방식</label><select id="run-mode"><option value="mock">인터페이스 실습</option><option value="local">로컬 모델 · 내 컴퓨터에서 생성 및 편집</option><option value="api">GPU 서버 · 이미지 생성 및 편집</option></select>
+      <div id="local-fields" hidden>
+        <p class="hint">로컬 모델 실행 창을 켠 뒤 적용하세요. 현재 컴퓨터의 <code>127.0.0.1:8032</code>에 연결됩니다.</p>
+        <p class="hint">Mac은 MLX 4비트, NVIDIA Windows는 CUDA 4비트를 사용합니다. 512 × 512 이미지로 시작하며, 메모리가 부족해지면 작업을 자동 중단합니다.</p>
+        <a href="https://github.com/lswgood0901/ai-design-workshop/blob/main/docs/local-setup.md" target="_blank" rel="noopener noreferrer">로컬 실행 준비 안내 ↗</a>
+      </div>
       <div id="api-fields" hidden>
         <label for="server-url">GPU 서버 주소</label><input id="server-url" type="url" placeholder="https://강사가-안내한-주소" autocomplete="off" spellcheck="false">
         <label for="api-key">수업용 API 키</label><input id="api-key" type="password" placeholder="수업에서 안내받은 키 입력" autocomplete="off" spellcheck="false">

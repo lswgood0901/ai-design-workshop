@@ -11,6 +11,8 @@ downloads/
 outputs/
 history/
 .venv/
+.venv-mlx/
+.venv-cuda/
 venv/
 __pycache__/
 *.pyc

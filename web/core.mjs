@@ -1,4 +1,15 @@
 /** Pure request/state helpers. No credential is written to persistent storage. */
+export const LOCAL_CONNECTION = Object.freeze({ base_url: "http://127.0.0.1:8032", api_key: "local" });
+export function connectionForMode(mode, serverConnection) {
+  if (mode === "local") return { ...LOCAL_CONNECTION };
+  if (mode === "api") return validateConnection(serverConnection);
+  if (mode === "mock") return null;
+  throw new Error("실행 방식을 확인해 주세요.");
+}
+export function isLocalConnection(connection) {
+  return connection?.base_url === LOCAL_CONNECTION.base_url && connection?.api_key === LOCAL_CONNECTION.api_key;
+}
+
 export const MODEL = "black-forest-labs/FLUX.2-klein-4B";
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
@@ -60,6 +71,16 @@ export function buildPayload({ mode, prompt, seed = "", size = "1024x1024", refe
 }
 
 export function describeStatus(data) {
+  if (["mlx", "cuda"].includes(data.backend)) {
+    const runtime = data.backend === "mlx" ? "Mac · MLX 4비트" : "NVIDIA · 4비트";
+    const memory = data.memory || {};
+    const available = memory.available_gib == null ? NaN : Number(memory.available_gib);
+    const memoryLabel = Number.isFinite(available) ? ` · 여유 메모리 ${available.toFixed(1)} GiB` : "";
+    const ready = data.loaded === true;
+    const status = data.busy ? "이미지 처리 중" : !ready ? "로컬 모델 준비 필요" : available < Number(memory.min_start_gib ?? 9) ? "앱을 닫아 메모리를 확보해 주세요" : "실행 준비 완료";
+    const lastError = typeof data.last_error === "string" && data.last_error ? ` · 최근 중단: ${data.last_error}` : "";
+    return `${runtime} · ${status}${memoryLabel}${lastError}`;
+  }
   const workers = Array.isArray(data.workers) ? data.workers : [];
   const busy = workers.filter(w => w.state === "busy").length;
   const ready = Number(data.ready_workers) || 0;

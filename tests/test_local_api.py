@@ -136,6 +136,22 @@ class LocalApiTests(unittest.TestCase):
         self.assertIn("/v1/generate", schema["paths"])
         self.assertIn("/v1/edit", schema["paths"])
 
+    def test_low_memory_detail_reaches_browser_and_releases_slot(self):
+        original = self.engine.invoke
+        def stop(*_):
+            raise api.ResourceStop("사용 가능한 메모리가 4GiB 아래로 내려가 작업을 중단했습니다.")
+        self.engine.invoke = stop
+        response = self.post(width=512, height=512)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("4GiB", response.json()["detail"])
+        self.engine.invoke = original
+        self.assertEqual(self.post(width=512, height=512).status_code, 200)
+
+    def test_local_default_and_size_cap(self):
+        self.assertEqual(self.post().status_code, 200)
+        self.assertEqual(self.engine.calls[-1][2:], (512, 512))
+        self.assertEqual(self.post(width=1024, height=256).status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

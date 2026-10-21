@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPayload, validateConnection, validateImageFiles, compositeRGBA, publicRecord, bestMaskIndex, describeStatus } from "../web/core.mjs";
+import { buildPayload, validateConnection, validateImageFiles, compositeRGBA, publicRecord, bestMaskIndex, describeStatus, connectionForMode, LOCAL_CONNECTION } from "../web/core.mjs";
 import { requestImage, getStatus } from "../web/api.mjs";
 
 const data = "data:image/png;base64,iVBORw0KGgo=";
@@ -100,4 +100,53 @@ test("cancelling client-side admission wait does not submit another request", as
     fetcher: async () => { calls++; return new Response("{}", { status: 429 }); },
   }), { name: "AbortError" });
   assert.equal(calls, 1);
+});
+
+test("local mode uses a fixed loopback connection while keeping the supplied GPU settings", () => {
+  const server = { base_url: "https://example.com", api_key: "test-only" };
+  assert.deepEqual(connectionForMode("api", server), server);
+  assert.deepEqual(connectionForMode("local", server), LOCAL_CONNECTION);
+  assert.deepEqual(connectionForMode("api", server), { base_url: "https://example.com", api_key: "test-only" });
+  assert.equal(connectionForMode("mock", server), null);
+  assert.throws(() => connectionForMode("other", server));
+});
+test("local generation and editing send 512px payloads and receive WebP", async () => {
+  for (const mode of ["generate", "edit"]) {
+    const references = mode === "edit" ? [data] : [];
+    const payload = buildPayload({ mode, prompt: "change table", size: "512x512", references });
+    const result = await requestImage(connectionForMode("local"), mode, payload, {
+      fetcher: async (url, options) => {
+        assert.equal(url, `http://127.0.0.1:8032/v1/${mode}`);
+        assert.equal(options.headers.Authorization, "Bearer local");
+        const body = JSON.parse(options.body);
+        assert.equal(body.width, 512); assert.equal(body.height, 512); assert.equal(body.num_inference_steps, 4);
+        assert.equal(body.input_image, mode === "edit" ? data : undefined);
+        return new Response("local-webp", { headers: { "Content-Type": "image/webp", "X-Seed": "601" } });
+      },
+    });
+    assert.equal(await result.blob.text(), "local-webp");
+    assert.equal(result.seed, "601");
+  }
+});
+test("local memory stop and busy responses preserve actionable details and require manual retry", async () => {
+  for (const [status, detail] of [[503, "여유 메모리가 4 GiB 아래로 내려가 자동 중단했습니다. 앱을 닫고 다시 실행해 주세요."], [429, "로컬 작업이 실행 중입니다. 완료 후 다시 실행해 주세요."]]) {
+    let calls = 0;
+    await assert.rejects(requestImage(LOCAL_CONNECTION, "generate", {}, {
+      fetcher: async () => { calls++; return new Response(JSON.stringify({ detail }), { status, headers: { "Content-Type": "application/json" } }); },
+      delay: async () => assert.fail("Local jobs must be retried manually."),
+    }), error => error.message === detail);
+    assert.equal(calls, 1);
+  }
+});
+test("local status shows readiness and memory instead of a GPU server queue", () => {
+  const status = { backend: "mlx", profile: "4bit", loaded: true, memory: { available_gib: 10.5, min_start_gib: 9, min_free_gib: 4 } };
+  assert.equal(describeStatus(status), "Mac · MLX 4비트 · 실행 준비 완료 · 여유 메모리 10.5 GiB");
+  assert.match(describeStatus({ ...status, backend: "cuda", busy: true }), /NVIDIA · 4비트 · 이미지 처리 중/);
+  assert.match(describeStatus({ ...status, loaded: false }), /로컬 모델 준비 필요/);
+  assert.match(describeStatus({ ...status, memory: { available_gib: 8.5 }, last_error: "메모리 부족으로 자동 중단" }), /앱을 닫아 메모리를 확보해 주세요.*최근 중단: 메모리 부족으로 자동 중단/);
+});
+test("local history exports retain the run mode and omit connection credentials", () => {
+  const record = publicRecord({ id: "local-1", kind: "local", mode: "edit", prompt: "change legs", parameters: { width: 512, height: 512 }, api_key: "local", connection: LOCAL_CONNECTION });
+  assert.equal(record.kind, "local"); assert.equal(record.mode, "edit"); assert.equal(record.parameters.width, 512);
+  assert.equal("api_key" in record, false); assert.equal("connection" in record, false);
 });

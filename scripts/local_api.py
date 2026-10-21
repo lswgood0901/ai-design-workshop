@@ -6,6 +6,12 @@ import argparse
 import base64
 import binascii
 import io
+import importlib.util
+import json
+import platform
+import struct
+import sys
+import tempfile
 import logging
 import re
 import secrets
@@ -23,11 +29,14 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_v
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from memory_guard import Supervisor, ResourceStop, snapshot
+
 ROOT = Path(__file__).resolve().parents[1]
 MAX_IMAGE = 10 * 1024 * 1024
 MAX_BODY = 29 * 1024 * 1024
 MAX_PIXELS = 16_777_216
-MAX_OUTPUT = 1_048_576
+MAX_OUTPUT = 512 * 512
 IMAGE_URL = re.compile(r"data:(image/(?:png|jpeg|webp));base64,(.+)", re.DOTALL)
 LOG = logging.getLogger("local_flux")
 
@@ -74,7 +83,7 @@ class ImageRequest(BaseModel):
         if len(refs) > 4 or any(not v for v in refs):
             raise ValueError("Use 1 to 4 nonempty reference images")
         if self.width and self.height and self.width * self.height > MAX_OUTPUT:
-            raise ValueError("Use an output size of at most 1 megapixel")
+            raise ValueError("로컬 4비트 모드에서는 가로·세로 최대 512px로 설정해 주세요.")
         return self
 
     def image_inputs(self):
@@ -173,63 +182,101 @@ def decode_image(value):
 def output_size(width, height, reference=None):
     if width is None and height is None:
         if reference is None:
-            return 1024, 1024
+            return 512, 512
         scale = min(1, (MAX_OUTPUT / (reference[0] * reference[1])) ** 0.5,
-                    4096 / reference[0], 4096 / reference[1])
+                    512 / reference[0], 512 / reference[1])
         width, height = [max(64, int(v * scale) // 16 * 16) for v in reference]
     elif width is None:
         width = max(64, round(height * (reference[0] / reference[1] if reference else 1) / 16) * 16)
     elif height is None:
         height = max(64, round(width * (reference[1] / reference[0] if reference else 1) / 16) * 16)
-    if max(width, height) > 4096 or width * height > MAX_OUTPUT:
-        raise HTTPException(422, "Use an output size of at most 1 megapixel")
+    if max(width, height) > 512 or width * height > MAX_OUTPUT:
+        raise HTTPException(422, "로컬 4비트 모드에서는 가로·세로 최대 512px로 설정해 주세요.")
     return width, height
 
 
 class FluxEngine:
-    def __init__(self, model_dir, device):
-        import torch
-        from diffusers import Flux2KleinPipeline
+    """A lightweight supervisor; model imports and allocations stay in a child."""
+    def __init__(self, model_dir=None, backend="auto"):
+        if backend == "auto":
+            backend = "mlx" if platform.system() == "Darwin" and platform.machine() == "arm64" else "cuda"
+        if backend == "mlx" and (platform.system() != "Darwin" or platform.machine() != "arm64"):
+            raise RuntimeError("MLX는 Apple Silicon Mac에서 사용합니다. Windows NVIDIA는 cuda를 선택해 주세요.")
+        if platform.system() == "Darwin" and backend == "cuda":
+            raise RuntimeError("Apple Silicon Mac에서는 mlx를 선택해 주세요. Intel Mac은 GPU 서버로 연결해 주세요.")
+        default = "FLUX.2-klein-4B-mlx-4bit" if backend == "mlx" else "FLUX.2-klein-4B"
+        self.model_dir = Path(model_dir or ROOT / "models" / default).resolve()
+        if backend == "mlx" and (self.model_dir / "mlx-4bit").is_dir():
+            self.model_dir /= "mlx-4bit"
+        self.backend = backend
+        required = ["mflux", "mlx"] if backend == "mlx" else ["torch", "diffusers", "transformers", "bitsandbytes", "accelerate"]
+        if any(importlib.util.find_spec(name) is None for name in required):
+            raise RuntimeError(f"requirements-local-{backend}.txt를 현재 Python 환경에 설치해 주세요.")
+        if backend == "mlx":
+            for component in ["transformer", "text_encoder"]:
+                shards = list((self.model_dir / component).glob("*.safetensors"))
+                if not shards:
+                    raise RuntimeError("MLX 4비트 모델 다운로드·검증을 완료해 주세요.")
+                with shards[0].open("rb") as file:
+                    length = struct.unpack("<Q", file.read(8))[0]
+                    if length > 16 * 1024 * 1024:
+                        raise RuntimeError("모델 헤더를 확인할 수 없습니다.")
+                    header = json.loads(file.read(length))
+                if str(header.get("__metadata__", {}).get("quantization_level")) != "4":
+                    raise RuntimeError("4비트 MLX 모델 경로를 확인해 주세요.")
+            for name in ["tokenizer/tokenizer.json", "vae/0.safetensors"]:
+                if not (self.model_dir / name).is_file():
+                    raise RuntimeError(f"모델 구성 파일을 확인해 주세요: {name}")
+        elif not (self.model_dir / "model_index.json").is_file():
+            raise RuntimeError("공식 FLUX.2-klein-4B 모델 다운로드·검증을 완료해 주세요.")
+        self.supervisor = Supervisor()
+        self.last_error = None
+        self.work_dir = ROOT / "outputs" / "local"
+        self.work_dir.mkdir(parents=True, exist_ok=True)
 
-        if not (Path(model_dir) / "model_index.json").is_file():
-            raise RuntimeError("Download and verify models/FLUX.2-klein-4B first")
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "mps"
-        if device == "cuda":
-            if not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
-                raise RuntimeError("Use a CUDA GPU with BF16 support or connect to the GPU server")
-        else:
-            if not torch.backends.mps.is_available():
-                raise RuntimeError("Check arm64 Python, macOS 14+ and MPS availability")
-            try:
-                x = torch.ones((2, 2), device="mps", dtype=torch.bfloat16)
-                (x @ x).cpu()
-                del x
-                torch.mps.empty_cache()
-            except RuntimeError as error:
-                raise RuntimeError("Check macOS 14+ and a PyTorch version supporting BF16 on MPS") from error
-        self.torch, self.device = torch, device
-        self.pipe = Flux2KleinPipeline.from_pretrained(
-            str(model_dir), torch_dtype=torch.bfloat16, local_files_only=True,
-            low_cpu_mem_usage=True,
-        )
-        if device == "cuda":
-            self.pipe.enable_model_cpu_offload()
-        else:
-            self.pipe.to("mps")
-        LOG.info("FLUX ready on %s", device)
+    def info(self):
+        row = snapshot(self.work_dir)
+        return {"backend": self.backend, "profile": "4bit", "loaded": True,
+                "memory": {"available_gib": round(row["available_gib"], 2),
+                           "min_start_gib": 9, "min_free_gib": 4},
+                "last_error": self.last_error, "last_run": self.supervisor.last_report}
+
+    def close(self):
+        self.supervisor.close()
 
     def invoke(self, body, images, seed, width, height):
-        args = dict(prompt=body.prompt, width=width, height=height,
-                    num_inference_steps=body.num_inference_steps,
-                    guidance_scale=body.guidance_scale,
-                    max_sequence_length=body.max_sequence_length,
-                    num_images_per_prompt=1,
-                    generator=self.torch.Generator(device="cpu").manual_seed(seed))
-        if images:
-            args["image"] = images if len(images) > 1 else images[0]
-        with self.torch.inference_mode():
-            return self.pipe(**args).images[0]
+        if body.guidance_scale != 1.0 or body.max_sequence_length != 512:
+            raise HTTPException(422, "로컬 4비트 모드는 guidance 1.0 / max_sequence_length 512로 실행해 주세요.")
+        self.last_error = None
+        try:
+            with tempfile.TemporaryDirectory(prefix="request-", dir=self.work_dir) as folder:
+                folder = Path(folder)
+                paths = []
+                for index, image in enumerate(images):
+                    path = folder / f"reference-{index}.png"
+                    reduced = image.copy()
+                    reduced.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                    reduced.save(path)
+                    reduced.close()
+                    paths.append(str(path))
+                job = dict(backend=self.backend, model_dir=str(self.model_dir), images=paths,
+                           prompt=body.prompt, width=width, height=height, seed=seed,
+                           num_inference_steps=body.num_inference_steps,
+                           guidance_scale=1.0, max_sequence_length=512)
+                job_path = folder / "job.json"
+                job_path.write_text(json.dumps(job), encoding="utf-8")
+                code = self.supervisor.run([sys.executable, str(ROOT / "scripts/inference_worker.py"), str(job_path)],
+                                           folder, folder / "worker.log")
+                if code:
+                    detail = "로컬 모델 실행을 완료하지 못했습니다. 설치와 모델 다운로드 상태를 확인해 주세요."
+                    if (folder / "error.json").is_file():
+                        detail += " " + json.loads((folder / "error.json").read_text(encoding="utf-8"))["detail"]
+                    raise RuntimeError(detail)
+                with Image.open(folder / "result.webp") as result:
+                    return result.convert("RGB")
+        except Exception as error:
+            self.last_error = str(error)
+            raise
 
 
 def create_app(engine_factory):
@@ -248,7 +295,11 @@ def create_app(engine_factory):
     @asynccontextmanager
     async def lifespan(app):
         threading.Thread(target=load, daemon=True, name="flux-loader").start()
-        yield
+        try:
+            yield
+        finally:
+            if state["engine"] is not None and hasattr(state["engine"], "close"):
+                state["engine"].close()
 
     app = FastAPI(title="Local FLUX.2-klein-4B", version="1.0", lifespan=lifespan)
     app.add_middleware(BodyLimit)
@@ -266,7 +317,8 @@ def create_app(engine_factory):
     @app.get("/health")
     def health():
         return {"ready_workers": int(state["engine"] is not None),
-                "loading": state["loading"], "error": state["error"]}
+                "loading": state["loading"], "error": state["error"], "busy": state["busy"],
+                **(state["engine"].info() if state["engine"] is not None and hasattr(state["engine"], "info") else {})}
 
     @app.get("/v1/status", dependencies=[Depends(auth)])
     def status():
@@ -281,9 +333,9 @@ def create_app(engine_factory):
 
     def run(body):
         if state["engine"] is None:
-            raise HTTPException(503, "Check /health while the model loads")
+            raise HTTPException(503, state["error"] or "로컬 모델 설치 상태를 확인 중입니다. 잠시 후 다시 실행해 주세요.")
         if not slot.acquire(blocking=False):
-            raise HTTPException(429, "Local GPU is processing one image", headers={"Retry-After": "3"})
+            raise HTTPException(429, "로컬 이미지 작업이 실행 중입니다. 완료 후 다시 실행해 주세요.", headers={"Retry-After": "3"})
         state["busy"] = True
         images = []
         try:
@@ -306,9 +358,9 @@ def create_app(engine_factory):
                 "X-Inference-Seconds": f"{time.monotonic() - started:.3f}"})
         except HTTPException:
             raise
-        except Exception:
+        except Exception as error:
             LOG.exception("Local inference failed")
-            raise HTTPException(503, "Check the local terminal; try 512x512 or use the GPU server") from None
+            raise HTTPException(503, str(error)) from None
         finally:
             for image in images:
                 image.close()
@@ -328,14 +380,14 @@ def create_app(engine_factory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", type=Path, default=ROOT / "models/FLUX.2-klein-4B")
-    parser.add_argument("--device", choices=["auto", "cuda", "mps"], default="auto")
+    parser.add_argument("--model-dir", type=Path)
+    parser.add_argument("--backend", choices=["auto", "mlx", "cuda"], default="auto")
     parser.add_argument("--port", type=int, default=8032)
     args = parser.parse_args()
     import uvicorn
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run(create_app(lambda: FluxEngine(args.model_dir.resolve(), args.device)),
-                host="127.0.0.1", port=args.port, workers=1)
+    uvicorn.run(create_app(lambda: FluxEngine(args.model_dir, args.backend)),
+                host="127.0.0.1", port=args.port, workers=1, timeout_graceful_shutdown=2)
 
 
 if __name__ == "__main__":

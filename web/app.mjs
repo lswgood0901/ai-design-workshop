@@ -1,11 +1,11 @@
-import { buildPayload, validateConnection, validateImageFiles, compositeRGBA, publicRecord } from "./core.mjs";
+import { buildPayload, validateConnection, validateImageFiles, compositeRGBA, publicRecord, connectionForMode } from "./core.mjs";
 import { requestImage, getStatus } from "./api.mjs";
 import { listHistory, saveHistory, deleteHistory } from "./history.mjs";
 import { loadSegmentation, segmentImage } from "./segmentation.mjs";
 
 const $ = id => document.getElementById(id);
 const state = {
-  mode: "generate", runMode: "mock", connection: null, references: [], records: [],
+  mode: "generate", runMode: "mock", connection: null, serverConnection: null, serverSize: "1024x1024", references: [], records: [],
   current: null, busy: false, controller: null, mask: null, persisted: true,
 };
 let outputURL, historyURLs = [], timer, pollTimer, polling = false;
@@ -40,22 +40,27 @@ function setMode(mode) {
   updateRunMode();
 }
 function updateRunMode() {
-  const api = state.runMode === "api";
-  $("connection-label").textContent = api ? "GPU 서버 연결" : "인터페이스 실습 모드";
-  $("connection-dot").classList.toggle("live", api);
-  $("mode-notice").classList.toggle("api", api);
+  const local = state.runMode === "local", live = state.runMode !== "mock";
+  $("connection-label").textContent = local ? "로컬 모델 연결" : live ? "GPU 서버 연결" : "인터페이스 실습 모드";
+  $("connection-dot").classList.toggle("live", live);
+  $("mode-notice").classList.toggle("api", live);
   $("mode-notice").replaceChildren();
   const title = document.createElement("strong"), detail = document.createElement("span");
-  title.textContent = api ? "FLUX.2 [klein] 4B" : "인터페이스 실습 모드";
-  detail.textContent = api ? "원본 이미지와 지시문으로 디자인을 생성·편집합니다. GPU 서버에서 접수한 순서대로 처리합니다." : "입력·미리보기·히스토리를 구성한 뒤 GPU 서버에 연결합니다.";
+  title.textContent = live ? "FLUX.2 [klein] 4B" : "인터페이스 실습 모드";
+  detail.textContent = local ? "내 컴퓨터에서 4비트 모델로 생성·편집합니다. 메모리가 부족하면 작업을 자동 중단합니다."
+    : live ? "원본 이미지와 지시문으로 디자인을 생성·편집합니다. GPU 서버에서 접수한 순서대로 처리합니다."
+    : "입력·미리보기·히스토리를 구성한 뒤 로컬 모델 또는 GPU 서버에 연결합니다.";
   $("mode-notice").append(title, detail);
-  $("submit-label").textContent = api ? (state.mode === "edit" ? "이미지 편집" : "이미지 생성") : "인터페이스 테스트";
-  if (!api) $("server-status").textContent = "입력과 결과 기록의 작동을 확인합니다.";
+  $("submit-label").textContent = live ? (state.mode === "edit" ? "이미지 편집" : "이미지 생성") : "인터페이스 테스트";
+  $("size").disabled = state.busy || local;
+  if (local) $("size").value = "512x512";
+  $("loading-help").textContent = local ? "메모리 상태를 확인하며 한 장씩 처리합니다." : "서버 이용자가 많으면 대기 시간이 늘어납니다.";
+  $("server-status").textContent = live ? "연결 상태를 확인하고 있습니다." : "입력과 결과 기록의 작동을 확인합니다.";
 }
 function setBusy(value) {
   state.busy = value;
   $("loading-state").hidden = !value;
-  $("cancel-button").hidden = !value || state.runMode !== "api";
+  $("cancel-button").hidden = !value || state.runMode === "mock";
   $("connection-open").disabled = value;
   for (const control of $("design-form").querySelectorAll("button, input, select, textarea")) {
     control.disabled = value;
@@ -64,24 +69,26 @@ function setBusy(value) {
   if (!value) {
     $("mask-open").disabled = state.references.length === 0;
     $("composite").disabled = !state.mask;
+    $("size").disabled = state.runMode === "local";
   }
   for (const button of document.querySelectorAll(".history-card-actions button")) button.disabled = value;
   $("reuse-output").disabled = value || !state.current;
 }
 
 async function refreshStatus() {
-  if (!state.connection || state.runMode !== "api" || polling) return;
+  if (!state.connection || state.runMode === "mock" || polling) return;
   polling = true;
+  const connection = state.connection;
   try {
-    const result = await getStatus(state.connection, { signal: AbortSignal.timeout(10000) });
-    $("server-status").textContent = result.label;
+    const result = await getStatus(connection, { signal: AbortSignal.timeout(10000) });
+    if (state.connection === connection) $("server-status").textContent = result.label;
   } catch (error) {
-    $("server-status").textContent = error.name === "TimeoutError" ? "서버 상태 확인 시간이 초과되었습니다." : `상태 확인: ${error.message}`;
+    if (state.connection === connection) $("server-status").textContent = error.name === "TimeoutError" ? "연결 상태 확인 시간이 초과되었습니다." : state.runMode === "local" && error instanceof TypeError ? "로컬 실행 창을 켠 뒤 연결해 주세요." : `상태 확인: ${error.message}`;
   } finally { polling = false; }
 }
 function startPolling() {
   clearInterval(pollTimer);
-  if (state.runMode === "api") { refreshStatus(); pollTimer = setInterval(refreshStatus, 6000); }
+  if (state.runMode !== "mock") { refreshStatus(); pollTimer = setInterval(refreshStatus, 6000); }
 }
 
 function renderReferences() {
@@ -148,7 +155,7 @@ async function compositeResult(blob, reference, mask) {
   try {
     const [generated, original, selected] = await Promise.all([imageFrom(generatedURL), imageFrom(reference.url), imageFrom(maskURL)]);
     const ratioDifference = Math.abs(generated.width / generated.height - original.width / original.height);
-    if (ratioDifference > .025) throw new Error("원본과 결과의 비율이 달라 영역 합성을 생략했습니다. 출력 비율을 ‘참조 이미지 기준 자동’으로 설정해 주세요.");
+    if (ratioDifference > .025) throw new Error(state.runMode === "local" ? "원본과 결과의 비율이 달라 영역 합성을 생략했습니다. 로컬 영역 합성은 정사각형 참조 이미지로 실행해 주세요." : "원본과 결과의 비율이 달라 영역 합성을 생략했습니다. 출력 비율을 ‘참조 이미지 기준 자동’으로 설정해 주세요.");
     const canvas = document.createElement("canvas"); canvas.width = generated.width; canvas.height = generated.height;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const pixels = image => { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(image, 0, 0, canvas.width, canvas.height); return ctx.getImageData(0, 0, canvas.width, canvas.height).data; };
@@ -160,23 +167,23 @@ async function compositeResult(blob, reference, mask) {
 
 async function run(event) {
   event.preventDefault(); if (state.busy) return; message("");
+  setBusy(true);
   let payload;
   try {
     const references = state.mode === "edit" ? await Promise.all(state.references.map(reference => toDataURL(reference.blob))) : [];
-    payload = buildPayload({ mode: state.mode, prompt: $("prompt").value, size: $("size").value, seed: $("seed").value, references });
-    if (state.runMode === "api") validateConnection(state.connection);
-  } catch (error) { message(error.message, "error"); return; }
+    payload = buildPayload({ mode: state.mode, prompt: $("prompt").value, size: state.runMode === "local" ? "512x512" : $("size").value, seed: $("seed").value, references });
+    if (state.runMode !== "mock") validateConnection(state.connection);
+  } catch (error) { message(error.message, "error"); setBusy(false); return; }
   const mode = state.mode, kind = state.runMode, original = state.references[0], mask = state.mask;
-  const applyMask = mode === "edit" && $("composite").checked && !!mask && kind === "api";
-  setBusy(true);
+  const applyMask = mode === "edit" && $("composite").checked && !!mask && kind !== "mock";
   const started = performance.now();
-  $("loading-title").textContent = kind === "mock" ? "인터페이스 테스트 미리보기를 만듭니다." : "서버의 이미지 응답을 기다리고 있습니다.";
+  $("loading-title").textContent = kind === "mock" ? "인터페이스 테스트 미리보기를 만듭니다." : kind === "local" ? "내 컴퓨터에서 이미지를 처리하고 있습니다." : "서버의 이미지 응답을 기다리고 있습니다.";
   $("elapsed").textContent = "0초"; timer = setInterval(() => $("elapsed").textContent = `${Math.floor((performance.now() - started) / 1000)}초 경과`, 1000);
   state.controller = new AbortController();
   try {
     const result = kind === "mock" ? { blob: await mockImage(payload), seed: null, elapsed_seconds: null } :
       await requestImage(state.connection, mode, payload, {
-        signal: state.controller.signal,
+        signal: state.controller.signal, timeoutMs: kind === "local" ? 660000 : 360000,
         onQueue: status => {
           $("loading-title").textContent = status.state === "waiting"
             ? `GPU 서버 접수 대기 중 · ${Math.ceil(status.delayMs / 1000)}초 뒤 자동 접수`
@@ -200,9 +207,9 @@ async function run(event) {
     renderHistory(); showRecord(record);
     message(warning || (kind === "mock" ? "인터페이스 테스트가 완료되었습니다. 이 이미지는 AI 생성 결과가 아닙니다." : composited ? "선택 영역에 생성 결과를 합성했습니다. 경계와 구조를 확인해 주세요." : "이미지 생성이 완료되었습니다. 결과를 검토하고 다음 지시문을 작성하세요."), warning ? "error" : "success");
   } catch (error) {
-    if (state.controller.signal.aborted) message("응답 대기를 중단했습니다. 이미 접수된 서버 작업은 계속 실행될 수 있습니다.", "error");
-    else if (error.name === "AbortError" || error.name === "TimeoutError") message("응답 대기 시간이 초과되었습니다. 서버 작업이 계속 진행 중일 수 있습니다. 강사에게 확인해 주세요.", "error");
-    else message(error instanceof TypeError ? "서버에 연결하지 못했습니다. 주소·네트워크·서버의 CORS 설정을 확인해 주세요." : error.message, "error");
+    if (state.controller.signal.aborted) message(kind === "local" ? "응답 대기를 중단했습니다. 로컬 실행 상태를 확인한 뒤 다시 실행해 주세요." : "응답 대기를 중단했습니다. 이미 접수된 서버 작업은 계속 실행될 수 있습니다.", "error");
+    else if (error.name === "AbortError" || error.name === "TimeoutError") message(kind === "local" ? "응답 대기 시간이 초과되었습니다. 로컬 실행 창에서 작업 상태를 확인해 주세요." : "응답 대기 시간이 초과되었습니다. 서버 작업이 계속 진행 중일 수 있습니다. 강사에게 확인해 주세요.", "error");
+    else message(error instanceof TypeError ? (kind === "local" ? "로컬 모델에 연결하지 못했습니다. 로컬 실행 창을 켠 뒤 다시 실행해 주세요." : "서버에 연결하지 못했습니다. 주소·네트워크·서버의 CORS 설정을 확인해 주세요.") : error.message, "error");
   } finally { clearInterval(timer); setBusy(false); state.controller = null; refreshStatus(); }
 }
 function showRecord(record) {
@@ -217,7 +224,7 @@ function showRecord(record) {
 }
 async function reuseRecord(record) {
   try {
-    await addReferences([record.blob], true); setMode("edit"); $("prompt").value = ""; $("size").value = "auto";
+    await addReferences([record.blob], true); setMode("edit"); $("prompt").value = ""; $("size").value = state.runMode === "local" ? "512x512" : "auto";
     $("prompt").focus(); $("design-form").scrollIntoView({ block: "nearest", behavior: "smooth" });
     message(record.kind === "mock" ? "테스트 이미지를 편집 입력으로 가져왔습니다. 실제 생성 결과가 아님을 확인해 주세요." : "선택한 결과를 첫 번째 참조 이미지로 가져왔습니다. 편집 지시문을 입력하세요.");
   } catch (error) { message(error.message, "error"); }
@@ -250,20 +257,27 @@ function renderHistory() {
   }
 }
 
-// Connection credentials remain only in state and the input element for this tab.
+// Server settings stay in this tab when switching between local and server modes.
+function showConnectionFields() {
+  $("api-fields").hidden = $("run-mode").value !== "api";
+  $("local-fields").hidden = $("run-mode").value !== "local";
+}
 $("connection-open").onclick = () => {
-  $("run-mode").value = state.runMode; $("api-fields").hidden = state.runMode !== "api";
-  $("server-url").value = state.connection?.base_url || ""; $("api-key").value = state.connection?.api_key || "";
+  $("run-mode").value = state.runMode; showConnectionFields();
+  $("server-url").value = state.serverConnection?.base_url || ""; $("api-key").value = state.serverConnection?.api_key || "";
   $("connection-error").hidden = true; $("connection-dialog").showModal();
 };
-$("run-mode").onchange = () => $("api-fields").hidden = $("run-mode").value !== "api";
+$("run-mode").onchange = showConnectionFields;
 $("connection-form").onsubmit = event => {
   event.preventDefault();
   try {
     const mode = $("run-mode").value;
-    const connection = mode === "api" ? validateConnection({ base_url: $("server-url").value, api_key: $("api-key").value }) : null;
+    const serverConnection = { base_url: $("server-url").value, api_key: $("api-key").value };
+    const connection = connectionForMode(mode, serverConnection);
+    state.serverConnection = mode === "api" ? connection : serverConnection;
+    if (state.runMode !== "local" && mode === "local") state.serverSize = $("size").value;
+    if (state.runMode === "local" && mode !== "local") $("size").value = state.serverSize;
     state.runMode = mode; state.connection = connection; $("connection-dialog").close(); updateRunMode(); startPolling(); message("");
-    if (!connection) $("api-key").value = "";
   } catch (error) { $("connection-error").textContent = error.message; $("connection-error").hidden = false; }
 };
 $("connection-file").onchange = async event => {
@@ -380,4 +394,4 @@ $("load-sam").onclick = async () => {
 if (location.protocol === "file:") message("HTML 파일을 직접 열면 모듈과 기록 기능이 제한됩니다. 안내된 로컬 웹 서버 주소로 접속해 주세요.", "error");
 try { state.records = await listHistory(); renderHistory(); }
 catch { state.persisted = false; message("이 브라우저에서는 기록을 저장할 수 없습니다. 결과를 생성한 뒤 파일로 내려받아 주세요.", "error"); }
-window.addEventListener("pagehide", () => { state.connection = null; $("api-key").value = ""; clearInterval(pollTimer); });
+window.addEventListener("pagehide", () => { state.connection = state.serverConnection = null; $("api-key").value = ""; clearInterval(pollTimer); });
